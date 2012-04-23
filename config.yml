@@ -1,0 +1,19 @@
+# Source directories to monitor for files
+#	- /Users/ben/Projects/handbraker/test/HandBrake/Queue
+sources:
+  - /Volumes/Drobo/Media/HandBrake/Queue
+
+working: /Volumes/Drobo/Media/HandBrake/In Progress
+destination: /Volumes/Drobo/Media/HandBrake/Complete
+itunes: /Volumes/Drobo/Media/iTunes/Automatically Add To iTunes
+# Test variables
+#working: /Users/ben/Projects/handbraker/test/HandBrake/In Progress
+#destination: /Users/ben/Projects/handbraker/test/HandBrake/Complete
+#itunes: /Users/ben/Projects/handbraker/test/iTunes/Automatically Add To iTunes
+
+valid_extensions: [.mpg, .mkv, .wmv]
+converted_extensions: [.mp4, .m4v]
+ignore: [., .., .DS_Store]
+
+handbrake_preset: AppleTV 2
+target_extension: .mp4

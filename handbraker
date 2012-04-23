@@ -1,66 +1,142 @@
 #!/usr/bin/env ruby
+path = File.expand_path(File.dirname(__FILE__))
 
 require 'rubygems'
+require 'yaml'
+require 'logger'
+require 'thread'
 
-puts "Launching handbraker (ruby #{RUBY_VERSION})\n\n\n\n"
+logger = Logger.new("#{path}/log/handbraker.log", "daily")
+logger.level = Logger::INFO
 
-source = "/Volumes/Drobo/Media/HandBrake/Queue"
-valid_extensions = [".mpg", ".mkv", ".wmv"]
-destination = "/Volumes/Drobo/Media/HandBrake/Complete"
-itunes= "/Volumes/Drobo/Media/iTunes/Automatically Add To iTunes"
-handbrake_preset = "AppleTV 2"
-ignore = [".", "..", ".DS_Store"]
-target_extension = ".mp4"
+logger.info "Launching handbraker (ruby #{RUBY_VERSION})"
 
-files = Dir.entries(source) - ignore
+# Load config
+config = YAML::load_file("#{path}/config.yml")
 
-loop do
-  begin
-    if files.count > 0
-      puts "#{files.count} files pending"
+# Initialize an empty queue
+queue = []
 
-      file = files.first
-      puts "Processing '#{file}'"
+semaphore = Mutex.new
+
+begin
+  config_loader = Thread.new do
+    loop do
+      sleep 60
+      # Reload config
+      semaphore.synchronize{
+        logger.debug "Reloading config"
+        config = YAML::load_file("#{path}/config.yml")
+      }
+    end
+  end
+
+  monitor = Thread.new do
+    loop do
+      # Initialize config variables
+      sources = nil
+      ignore = nil
+      converted_extensions = nil
+      itunes = nil
+      valid_extensions = nil
+
+      # Load from the current config
+      semaphore.synchronize {
+        sources = config['sources']
+        ignore = config['ignore']
+        converted_extensions = config['converted_extensions']
+        itunes = config['itunes']
+        valid_extensions = config['valid_extensions']
+      }
+
+      # Monitoring thread
+      logger.debug "#{sources.count} sources to scan"
+      sources.each do |source|
+        logger.debug "Scanning #{source}"
+        files = Dir.entries(source) - ignore
+        logger.debug "Found #{files.count} files"
+        files.each do |file|
+          logger.debug "Found #{file}"
+          extension = File.extname(file)
+          if converted_extensions.include? extension
+            # Skip conversion, move to iTunes
+            system("mv", "#{source}/#{file}", "#{itunes}/")
+            logger.info "#{file} moved to iTunes"
+          end
+
+          if valid_extensions.include? extension and not queue.include?([file, source])
+            # Queue file for conversion
+            semaphore.synchronize {
+              queue << [file, source]
+            }
+            logger.info "#{file} queued"
+          end
+        end
+      end
+      sleep 10
+    end
+  end
+
+
+  loop do
+    # Processing loop
+    logger.info "Queue: #{queue.count} files"  
+    if queue.count > 0
+      file = nil
+      directory = nil
+
+      # Initialize config variables
+      itunes = nil
+      working = nil
+      destination = nil
+      target_extension = nil
+      handbrake_preset = nil
+
+      semaphore.synchronize {
+        itunes = config['itunes']
+        working = config['working']
+        destination = config['destination']
+        target_extension = config['target_extension']
+        handbrake_preset = config['handbrake_preset']
+
+        file, directory = queue.pop
+        logger.info "Processing #{file} (#{directory})"
+        # Move to working directory
+        system("mv", "#{directory}/#{file}", "#{working}/#{file}")
+      }
 
       extension = File.extname(file)
       name = file.gsub(extension, "")
       extension.downcase!
-      puts "Name: #{name}"
-      puts "Extension: #{extension}"
-
-      if valid_extensions.include?(extension)
-        source_file = "#{source}/#{file}"
-        destination_file = "#{destination}/#{name}#{target_extension}"
-        puts "Starting to process '#{file}'"
-        command = "HandBrakeCLI -i \"#{source_file}\" -o \"#{destination_file}\" --preset=\"#{handbrake_preset}\""
-        puts system(command)
-        puts "Finished processing '#{file}'"
-
-        puts "Moving source file #{source_file}"
-        system("mv", "#{source_file}", "#{destination}/")
-
-        puts "Adding to iTunes\n\n"
-        system("mv", "#{destination_file}", "#{itunes}/")
-
-      else
-        puts "Invalid extension #{extension}. Skipping...\n\n"
-      end
       
-      sleep 10
-    else
-      puts "No pending files.\n\n\n\n"
-      sleep 60
+      source_file = "#{working}/#{file}"
+      destination_file = "#{destination}/#{name}#{target_extension}"
+      
+      command = "HandBrakeCLI -i \"#{source_file}\" -o \"#{destination_file}\" --preset=\"#{handbrake_preset}\""
+      
+      logger.info "Begin conversion for #{file} (#{directory})"
+      logger.debug "Command: #{command}"
+
+      #DEBUG ONLY
+      #system("cp", "#{source_file}", "#{destination_file}")
+      #system("mv", "#{source_file}", "#{destination}")
+      system(command)
+
+      logger.info "Conversion complete for #{file} (#{directory})"
+
+      logger.info "Adding #{file} to iTunes"
+      system("mv", "#{destination_file}", "#{itunes}/")
     end
 
-    # Reload files from the directory
-    files = Dir.entries(source) - ignore
-  rescue Exception => e
-      if e.to_s == 'SIGTERM' or e.to_s == '' or e.to_s == 'exit' # Empty indicates the ctrl+c signal from the command line
-        puts "Quitting..."
-        break
-      else
-        puts "Loop interrupted by error\n#{'-' * 10}\n#{e.to_s}\n\n#{e.backtrace}\n#{'-' * 10}"
-        sleep 3
-      end
+    sleep 10
+  end
+rescue Exception => e
+  if e.to_s == 'SIGTERM' or e.to_s == '' or e.to_s == 'exit' # Empty indicates the ctrl+c signal from the command line
+    logger.info "Quitting..."
+    Thread.kill monitor
+    Thread.kill config_loader
+  else
+    logger.error "Loop interrupted by error\n#{'-' * 10}\n#{e.to_s}\n\n#{e.backtrace}\n#{'-' * 10}"
+    sleep 3
   end
 end
