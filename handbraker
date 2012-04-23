@@ -1,0 +1,66 @@
+#!/usr/bin/env ruby
+
+require 'rubygems'
+
+puts "Launching handbraker (ruby #{RUBY_VERSION})\n\n\n\n"
+
+source = "/Volumes/Drobo/Media/HandBrake/Queue"
+valid_extensions = [".mpg", ".mkv", ".wmv"]
+destination = "/Volumes/Drobo/Media/HandBrake/Complete"
+itunes= "/Volumes/Drobo/Media/iTunes/Automatically Add To iTunes"
+handbrake_preset = "AppleTV 2"
+ignore = [".", "..", ".DS_Store"]
+target_extension = ".mp4"
+
+files = Dir.entries(source) - ignore
+
+loop do
+  begin
+    if files.count > 0
+      puts "#{files.count} files pending"
+
+      file = files.first
+      puts "Processing '#{file}'"
+
+      extension = File.extname(file)
+      name = file.gsub(extension, "")
+      extension.downcase!
+      puts "Name: #{name}"
+      puts "Extension: #{extension}"
+
+      if valid_extensions.include?(extension)
+        source_file = "#{source}/#{file}"
+        destination_file = "#{destination}/#{name}#{target_extension}"
+        puts "Starting to process '#{file}'"
+        command = "HandBrakeCLI -i \"#{source_file}\" -o \"#{destination_file}\" --preset=\"#{handbrake_preset}\""
+        puts system(command)
+        puts "Finished processing '#{file}'"
+
+        puts "Moving source file #{source_file}"
+        system("mv", "#{source_file}", "#{destination}/")
+
+        puts "Adding to iTunes\n\n"
+        system("mv", "#{destination_file}", "#{itunes}/")
+
+      else
+        puts "Invalid extension #{extension}. Skipping...\n\n"
+      end
+      
+      sleep 10
+    else
+      puts "No pending files.\n\n\n\n"
+      sleep 60
+    end
+
+    # Reload files from the directory
+    files = Dir.entries(source) - ignore
+  rescue Exception => e
+      if e.to_s == 'SIGTERM' or e.to_s == '' or e.to_s == 'exit' # Empty indicates the ctrl+c signal from the command line
+        puts "Quitting..."
+        break
+      else
+        puts "Loop interrupted by error\n#{'-' * 10}\n#{e.to_s}\n\n#{e.backtrace}\n#{'-' * 10}"
+        sleep 3
+      end
+  end
+end
